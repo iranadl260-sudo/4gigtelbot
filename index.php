@@ -12,8 +12,8 @@ require_once 'madeline.php';
 // تنظیمات API
 $settings = [
     'app_info' => [
-        'api_id'   => 1234567, // 👈 api_id خود را وارد کنید
-        'api_hash' => 'YOUR_API_HASH_HERE', // 👈 api_hash خود را وارد کنید
+        'api_id'   => 2040, // 👈 api_id خود را وارد کنید
+        'api_hash' => 'b682153567fad58631a2e23be063d22d', // 👈 api_hash خود را وارد کنید
     ],
     'logger' => ['logger' => 0]
 ];
