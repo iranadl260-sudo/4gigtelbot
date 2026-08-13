@@ -1,27 +1,23 @@
 <?php
-// افزایش حد حافظه و زمان اجرای اسکریپت
+// افزایش حد حافظه و زمان اجرای اسکریپت برای فایل‌های حجیم
 ini_set('memory_limit', '1024M');
 set_time_limit(0);
 
-// دانلود اتوماتیک MadelineProto
-if (!file_exists('madeline.php')) {
-    copy('https://phar.madelineproto.org/madeline.php', 'madeline.php');
-}
+// فراخوانی مستقیم کتابخانه MadelineProto
 require_once 'madeline.php';
 
-// تنظیمات API
-$settings = [
-    'app_info' => [
-        'api_id'   => 2040, // 👈 api_id خود را وارد کنید
-        'api_hash' => 'b682153567fad58631a2e23be063d22d', // 👈 api_hash خود را وارد کنید
-    ],
-    'logger' => ['logger' => 0]
-];
+use danog\MadelineProto\Settings;
+
+// ۱. تنظیمات API ID و API Hash (مطابق با استاندارد جدید MadelineProto v8+)
+$settings = new Settings();
+$settings->getAppInfo()
+    ->setApiId(2496)                  // 👈 api_id (عددی) خود را اینجا وارد کنید
+    ->setApiHash('8e45c8e4f5283727810d2d6f6412999f');  // 👈 api_hash متنی خود را اینجا وارد کنید
 
 $MadelineProto = new \danog\MadelineProto\API('session.madeline', $settings);
 $MadelineProto->start();
 
-// ۱. بخش استریم چانک به دانلود منیجر (برای گزینه ۳)
+// ۲. پردازش استریم تکه‌تکه (Chunked Stream) برای دانلود منیجر (گزینه ۳)
 if (isset($_GET['stream_id']) && isset($_GET['peer'])) {
     $messageId = (int)$_GET['stream_id'];
     $peer      = $_GET['peer'];
@@ -31,33 +27,32 @@ if (isset($_GET['stream_id']) && isset($_GET['peer'])) {
         if (!empty($messages['messages'][0]['media'])) {
             $media = $messages['messages'][0];
             
-            // ارسال فایل به صورت Chunked Stream مستقیم به دانلود منیجر (IDM)
+            // هدرهای مخصوص دانلود مستقیم در دانلود منیجر (IDM)
             header('Content-Type: application/octet-stream');
             header('Content-Disposition: attachment; filename="file_' . $messageId . '"');
             
-            // این متد دانلود منیجر را پشتیبانی کرده و فایل را تکه‌تکه ارسال می‌کند
+            // ارسال چانک‌ها مستقیماً از تلگرام به مرورگر/IDM بدون ذخیره روی هاست
             $MadelineProto->downloadToResponse($media);
             exit;
         }
     } catch (\Exception $e) {
-        die("خطا در استریم: " . $e->getMessage());
+        die("خطا در استریم فایل: " . $e->getMessage());
     }
 }
 
-// ۲. پردازش پیام‌های ربات
+// ۳. دریافت و پردازش پیام‌های جدید و Callbackها
 $update = $MadelineProto->getUpdates();
 
-// بررسی دریافت پیام جدید
+// الف) پردازش فایلی که کاربر برای ربات می‌فرستد
 if (isset($update['message'])) {
     $msg     = $update['message'];
     $chat_id = $msg['to_id'] ?? null;
 
-    // دریافت دکمه‌های کلیک شده (Callback Query)
     if (isset($msg['media'])) {
         $msg_id = $msg['id'];
-        $peer   = $msg['to_id']['channel_id'] ?? $msg['from_id'];
+        $peer   = $msg['to_id']['channel_id'] ?? $msg['from_id'] ?? $chat_id;
 
-        // کیبورد ۴ گزینه‌ای
+        // دکمه‌های شیشه‌ای ۴ گزینه‌ای
         $buttons = [
             'inline_keyboard' => [
                 [['text' => '1️⃣ ارسال فایل در چت', 'callback_data' => "opt1_{$peer}_{$msg_id}"]],
@@ -69,63 +64,65 @@ if (isset($update['message'])) {
 
         $MadelineProto->messages->sendMessage([
             'peer'         => $chat_id,
-            'message'      => "📦 فایل شما دریافت شد. یکی از گزینه‌های زیر را انتخاب کنید:",
+            'message'      => "📦 فایل شما دریافت شد.\nلطفاً نحوه دریافت را انتخاب کنید:",
             'reply_markup' => $buttons
         ]);
     }
 }
 
-// ۳. پردازش کلیک روی گزینه‌ها
+// ب) پردازش کلیک کاربر روی دکمه‌ها
 if (isset($update['callback_query'])) {
     $cb   = $update['callback_query'];
-    $data = $cb['data'];
-    $chat = $cb['userId'];
+    $data = $cb['data'] ?? '';
+    $chat = $cb['userId'] ?? null;
 
-    list($opt, $peer, $msg_id) = explode('_', $data);
+    if (strpos($data, 'opt') === 0) {
+        list($opt, $peer, $msg_id) = explode('_', $data);
+        $domain = "https://" . ($_SERVER['HTTP_HOST'] ?? 'fourgigtelbot.onrender.com');
 
-    // لینک پایه هاست رندر شما
-    $domain = "https://" . $_SERVER['HTTP_HOST']; 
-
-    // **گزینه ۱: ارسال مجدد فایل به کاربر در چت**
-    if ($opt === 'opt1' || $opt === 'opt4') {
-        $MadelineProto->messages->forwardMessages([
-            'from_peer' => $peer,
-            'id'        => [$msg_id],
-            'to_peer'   => $chat
-        ]);
-    }
-
-    // **گزینه ۲: ذخیره روی دیسک هاست و ارائه لینک دانلود مستقیم**
-    if ($opt === 'opt2' || $opt === 'opt4') {
-        try {
-            if (!is_dir('downloads')) mkdir('downloads', 0777, true);
-            
-            $messages = $MadelineProto->channels->getMessages(['channel' => $peer, 'id' => [$msg_id]]);
-            $filePath = 'downloads/' . $msg_id . '_file';
-            
-            // دانلود و ذخیره روی دیسک
-            $MadelineProto->downloadToFile($messages['messages'][0], $filePath);
-            
-            $directUrl = $domain . '/' . $filePath;
-            $MadelineProto->messages->sendMessage([
-                'peer'    => $chat,
-                'message' => "💾 **فایل روی هاست ذخیره شد:**\n" . $directUrl
-            ]);
-        } catch (\Exception $e) {
-            $MadelineProto->messages->sendMessage([
-                'peer'    => $chat,
-                'message' => "⚠️ خطا در ذخیره روی هاست (احتمال کمبود فضای دیسک): " . $e->getMessage()
+        // گزینه ۱ یا ۴: ارسال مجدد فایل در چت (بدون دانلود)
+        if ($opt === 'opt1' || $opt === 'opt4') {
+            $MadelineProto->messages->forwardMessages([
+                'from_peer' => $peer,
+                'id'        => [$msg_id],
+                'to_peer'   => $chat
             ]);
         }
-    }
 
-    // **گزینه ۳: ارسال از طریق Chunks به دانلود منیجر بدون ذخیره روی هاست**
-    if ($opt === 'opt3' || $opt === 'opt4') {
-        $streamUrl = $domain . "/index.php?stream_id={$msg_id}&peer={$peer}";
-        $MadelineProto->messages->sendMessage([
-            'peer'       => $chat,
-            'message'    => "⚡ **لینک استریم مستقیم (مخصوص دانلود منیجر):**\n\n<code>{$streamUrl}</code>\n\n*(این لینک فایل را به صورت Chunked استریم می‌کند و نیازی به فضای هاست ندارد)*",
-            'parse_mode' => 'HTML'
-        ]);
+        // گزینه ۲ یا ۴: ذخیره روی هاست و ارائه لینک دانلود مستقیم
+        if ($opt === 'opt2' || $opt === 'opt4') {
+            try {
+                if (!is_dir('downloads')) {
+                    mkdir('downloads', 0777, true);
+                }
+                
+                $messages  = $MadelineProto->channels->getMessages(['channel' => $peer, 'id' => [$msg_id]]);
+                $filePath  = 'downloads/' . $msg_id . '_file';
+                
+                // دانلود و ذخیره روی دیسک هاست
+                $MadelineProto->downloadToFile($messages['messages'][0], $filePath);
+                
+                $directUrl = $domain . '/' . $filePath;
+                $MadelineProto->messages->sendMessage([
+                    'peer'    => $chat,
+                    'message' => "💾 **فایل روی هاست ذخیره شد:**\n" . $directUrl
+                ]);
+            } catch (\Exception $e) {
+                $MadelineProto->messages->sendMessage([
+                    'peer'    => $chat,
+                    'message' => "⚠️ خطا در ذخیره روی هاست (احتمال کمبود فضای دیسک): " . $e->getMessage()
+                ]);
+            }
+        }
+
+        // گزینه ۳ یا ۴: استریم چانک مستقیم به دانلود منیجر
+        if ($opt === 'opt3' || $opt === 'opt4') {
+            $streamUrl = $domain . "/index.php?stream_id={$msg_id}&peer={$peer}";
+            $MadelineProto->messages->sendMessage([
+                'peer'       => $chat,
+                'message'    => "⚡ **لینک استریم مستقیم (مخصوص دانلود منیجر):**\n\n<code>{$streamUrl}</code>\n\n*(بدون اشغال فضای هاست، مستقیم از تلگرام به IDM)*",
+                'parse_mode' => 'HTML'
+            ]);
+        }
     }
 }
