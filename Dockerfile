@@ -1,20 +1,24 @@
 FROM php:8.2-apache
 
-# نصب پیش‌نیازهای لازم برای پردازش چانک‌ها و فایل‌های حجیم
+# نصب ابزارها و کتابخانه‌های مورد نیاز از جمله libgmp-dev
 RUN apt-get update && apt-get install -y \
     libffi-dev \
     libsqlite3-dev \
     zlib1g-dev \
-    libpng-dev \
-    libjpeg-dev \
+    libgmp-dev \
     git \
     unzip \
-    && docker-php-ext-install ffi pdo_sqlite sockets bcmath
+    curl \
+    && docker-php-ext-install ffi pdo_sqlite sockets bcmath gmp
 
-# فعال‌سازی ماژول rewrite در آپاچی
+# فعال‌سازی rewrite در آپاچی
 RUN a2enmod rewrite
 
 COPY . /var/www/html/
+
+# دانلود مستقیم madeline.php در زمان ساخت ایمیج
+RUN curl -sSL https://phar.madelineproto.org/madeline.php -o /var/www/html/madeline.php
+
 RUN chmod -R 777 /var/www/html
 
 EXPOSE 80
